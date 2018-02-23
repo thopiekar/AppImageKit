@@ -46,48 +46,60 @@ endif()
 
 mark_as_advanced(xz_INCLUDE_DIR xz_LIBRARIES_DIR xz_LIBRARIES xz_PREFIX)
 
+if(NOT USE_SYSTEM_SQUASHFUSE)
+	# as distros don't provide suitable squashfuse and squashfs-tools, those dependencies are bundled in, can, and should
+	# be used from this repository
+	# TODO: implement out-of-source builds for squashfuse, as for the other dependencies
+	configure_file(
+		${CMAKE_CURRENT_SOURCE_DIR}/src/patch-squashfuse.sh.in
+		${CMAKE_CURRENT_BINARY_DIR}/patch-squashfuse.sh
+		@ONLY
+	)
 
-# as distros don't provide suitable squashfuse and squashfs-tools, those dependencies are bundled in, can, and should
-# be used from this repository
-# TODO: implement out-of-source builds for squashfuse, as for the other dependencies
-configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/patch-squashfuse.sh.in
-    ${CMAKE_CURRENT_BINARY_DIR}/patch-squashfuse.sh
-    @ONLY
-)
+	ExternalProject_Add(squashfuse
+		GIT_REPOSITORY https://github.com/vasi/squashfuse/
+		GIT_TAG 1f98030
+		UPDATE_COMMAND ""  # make sure CMake won't try to fetch updates unnecessarily and hence rebuild the dependency every time
+		PATCH_COMMAND bash -xe ${CMAKE_CURRENT_BINARY_DIR}/patch-squashfuse.sh
+		CONFIGURE_COMMAND libtoolize --force
+		          COMMAND env ACLOCAL_FLAGS="-I /usr/share/aclocal" aclocal
+		          COMMAND autoheader
+		          COMMAND automake --force-missing --add-missing
+		          COMMAND autoreconf -fi || true
+		          COMMAND sed -i "/PKG_CHECK_MODULES.*/,/,:./d" configure  # https://github.com/vasi/squashfuse/issues/12
+		          COMMAND ./configure --disable-demo --disable-high-level --without-lzo --without-lz4 --prefix=<INSTALL_DIR> --libdir=<INSTALL_DIR>/lib --with-xz=${xz_PREFIX}
+		          COMMAND sed -i "s|XZ_LIBS = -llzma |XZ_LIBS = -Bstatic ${xz_LIBRARIES}/|g" Makefile
+		BUILD_COMMAND make
+		BUILD_IN_SOURCE ON
+		INSTALL_COMMAND make install
+	)
 
-ExternalProject_Add(squashfuse
-    GIT_REPOSITORY https://github.com/vasi/squashfuse/
-    GIT_TAG 1f98030
-    UPDATE_COMMAND ""  # make sure CMake won't try to fetch updates unnecessarily and hence rebuild the dependency every time
-    PATCH_COMMAND bash -xe ${CMAKE_CURRENT_BINARY_DIR}/patch-squashfuse.sh
-    CONFIGURE_COMMAND libtoolize --force
-              COMMAND env ACLOCAL_FLAGS="-I /usr/share/aclocal" aclocal
-              COMMAND autoheader
-              COMMAND automake --force-missing --add-missing
-              COMMAND autoreconf -fi || true
-              COMMAND sed -i "/PKG_CHECK_MODULES.*/,/,:./d" configure  # https://github.com/vasi/squashfuse/issues/12
-              COMMAND ./configure --disable-demo --disable-high-level --without-lzo --without-lz4 --prefix=<INSTALL_DIR> --libdir=<INSTALL_DIR>/lib --with-xz=${xz_PREFIX}
-              COMMAND sed -i "s|XZ_LIBS = -llzma |XZ_LIBS = -Bstatic ${xz_LIBRARIES}/|g" Makefile
-    BUILD_COMMAND make
-    BUILD_IN_SOURCE ON
-    INSTALL_COMMAND make install
-)
+	ExternalProject_Get_Property(squashfuse SOURCE_DIR)
+	ExternalProject_Get_Property(squashfuse INSTALL_DIR)
+	set(squashfuse_SOURCE_DIR "${SOURCE_DIR}")
+	set(squashfuse_INSTALL_DIR "${INSTALL_DIR}")
+	mark_as_advanced(squashfuse_SOURCE_DIR squashfuse_INSTALL_DIR)
 
-ExternalProject_Get_Property(squashfuse SOURCE_DIR)
-ExternalProject_Get_Property(squashfuse INSTALL_DIR)
-set(squashfuse_SOURCE_DIR "${SOURCE_DIR}")
-set(squashfuse_INSTALL_DIR "${INSTALL_DIR}")
-mark_as_advanced(squashfuse_SOURCE_DIR squashfuse_INSTALL_DIR)
+	set(squashfuse_LIBRARY_DIR ${squashfuse_SOURCE_DIR}/.libs)
+	set(squashfuse_INCLUDE_DIR ${squashfuse_SOURCE_DIR})
 
-set(squashfuse_LIBRARY_DIR ${squashfuse_SOURCE_DIR}/.libs)
-set(squashfuse_INCLUDE_DIR ${squashfuse_SOURCE_DIR})
+	set(libsquashfuse ${squashfuse_LIBRARY_DIR}/libsquashfuse.a)
+	set(libsquashfuse_ll ${squashfuse_LIBRARY_DIR}/libsquashfuse_ll.a)
+	set(libfuseprivate ${squashfuse_LIBRARY_DIR}/libfuseprivate.a)
+	set(squashfuse_LIBRARIES ${libsquashfuse} ${libsquashfuse_ll} ${libfuseprivate})
+	mark_as_advanced(libsquashfuse libfuseprivate)
+else()
+    message(STATUS "Using system squashfuse")
 
-set(libsquashfuse ${squashfuse_LIBRARY_DIR}/libsquashfuse.a)
-set(libsquashfuse_ll ${squashfuse_LIBRARY_DIR}/libsquashfuse_ll.a)
-set(libfuseprivate ${squashfuse_LIBRARY_DIR}/libfuseprivate.a)
-set(squashfuse_LIBRARIES ${libsquashfuse} ${libsquashfuse_ll} ${libfuseprivate})
-mark_as_advanced(libsquashfuse libfuseprivate)
+    find_package(LibSQUASHFUSE)
+    if(NOT LIBSQUASHFUSE_FOUND)
+        message(FATAL_ERROR "libsquashfuse could not be found on the system. You will have to either install it, or use the bundled squashfuse.")
+    endif()
+
+    set(squashfuse_INCLUDE_DIR "${LIBSQUASHFUSE_INCLUDE_DIRS}")
+    set(squashfuse_LIBRARIES "${LIBSQUASHFUSE_LIBRARIES}")
+    set(squashfuse_PREFIX "/usr/lib")
+endif()
 
 mark_as_advanced(squashfuse_LIBRARY_DIR squashfuse_LIBRARIES squashfuse_INCLUDE_DIR)
 
